@@ -543,7 +543,7 @@ setup_norun()
 	# prevent the start of configd
 	echo 'configd_enable="NO"' >> ${1}/etc/rc.conf.local
 
-	mount -t devfs devfs ${1}/dev 2> /dev/null || true
+	mount -t devfs devfs ${1}/dev 2>/dev/null || true
 }
 
 setup_chroot()
@@ -601,19 +601,22 @@ setup_version()
 setup_base()
 {
 	echo ">>> Setting up base in ${1}"
-
-	tar -C ${1} -xpf ${SETSDIR}/base-*-${PRODUCT_ARCH}${PRODUCT_DEVICE+"-${PRODUCT_DEVICE}"}.txz
-	rm -f ${1}/.abi_hint
+		tar -C ${1} -xpf ${SETSDIR}/base-*-${PRODUCT_ARCH}${PRODUCT_DEVICE+"-${PRODUCT_DEVICE}"}.txz
+		rm -f ${1}/.abi_hint
 
 	# /home is needed for LiveCD images, and since it
 	# belongs to the base system, we create it from here.
-	mkdir -p ${1}/home
+	if [ ! -d "${1}/home" ]; then
+		mkdir -p ${1}/home
+	fi
 
 	# /conf is needed for the config subsystem at this
 	# point as the storage location.  We ought to add
 	# this here, because otherwise read-only install
 	# media wouldn't be able to bootstrap the directory.
-	mkdir -p ${1}/conf
+	if [ ! -d "${1}/conf" ]; then
+		mkdir -p ${1}/conf
+	fi
 }
 
 setup_kernel()
@@ -775,7 +778,7 @@ find_set()
 
 extract_packages()
 {
-	echo ">>> Extracting packages in ${1}"
+	echo ">>> Extracting packages in: ${1}"
 
 	BASEDIR=${1}
 
@@ -819,22 +822,6 @@ search_packages()
 	fi
 
 	return 1
-}
-
-remove_packages()
-{
-	BASEDIR=${1}
-	shift
-	PKGLIST=${@}
-
-	echo ">>> Removing packages in ${BASEDIR}: ${PKGLIST}"
-
-	for PKG in ${PKGLIST}; do
-		for PKGFILE in $(cd ${BASEDIR}${PACKAGESDIR}; \
-		    find All -name "${PKG}-[0-9]*.pkg" -type f); do
-			rm ${BASEDIR}${PACKAGESDIR}/${PKGFILE}
-		done
-	done
 }
 
 prune_packages()
@@ -906,48 +893,6 @@ unlock_packages()
 	done
 }
 
-install_packages()
-{
-	BASEDIR=${1}
-	shift
-	PKGLIST=${@}
-
-	echo ">>> Installing packages in ${BASEDIR}: ${PKGLIST}"
-
-	# remove previous packages for a clean environment
-	pkg -c ${BASEDIR} remove -fya
-
-	# Adds all selected packages and fails if one cannot
-	# be installed.  Used to build a runtime environment.
-	for PKG in pkg ${PKGLIST}; do
-		if [ -n "$(echo "${PKG}" | sed 's/[^*]*//')" ]; then
-			echo "Cannot install globbed package: ${PKG}" >&2
-			exit 1
-		fi
-		PKGFOUND=
-		for PKGFILE in $({
-			cd ${BASEDIR}
-			find .${PACKAGESDIR}/All -name ${PKG}-[0-9]*.pkg
-		}); do
-			pkg -c ${BASEDIR} add ${PKGFILE}
-			PKGFOUND=1
-		done
-		if [ -z "${PKGFOUND}" ]; then
-			echo "Could not find package: ${PKG}" >&2
-			return 1
-		fi
-	done
-
-	# collect all installed packages (minus locked packages)
-	PKGLIST="$(pkg -c ${BASEDIR} query -e "%k != 1" %n)"
-
-	for PKG in ${PKGLIST}; do
-		# add, unlike install, is not aware of repositories :(
-		pkg -c ${BASEDIR} annotate -qyA ${PKG} \
-		    repository ${PRODUCT_NAME}
-	done
-}
-
 custom_packages()
 {
 	chroot ${1} /bin/sh -es << EOF
@@ -962,6 +907,74 @@ EOF
 	if [ -n "${PRODUCT_REBUILD}" ]; then
 		echo ">>> Rebuilt version ${5} for ${4}" >> ${1}/.pkg-msg
 	fi
+}
+
+install_packages()
+{
+	BASEDIR=${1}
+	shift
+	PKGLIST=${@}
+
+	echo ">>> Installing packages in ${BASEDIR}: ${PKGLIST}"
+
+	# remove previous packages for a clean environment
+	pkg -c ${BASEDIR} remove -ayf
+
+	# Adds all selected packages and fails if one cannot
+	# be installed.  Used to build a runtime environment.
+	for PKG in pkg ${PKGLIST}; do
+		if [ -n "$(echo "${PKG}" | sed 's/[^*]*//')" ]; then
+			echo "Cannot install globbed package: ${PKG}" >&2
+			exit 1
+		fi
+		PKGFOUND=
+		for PKGFILE in $(cd ${BASEDIR}; find .${PACKAGESDIR}/All -type f -iname ${PKG}-[0-9]*.pkg); do
+			pkg -c ${BASEDIR} add ${PKGFILE}
+			PKGFOUND=1
+		done
+		if [ -z "${PKGFOUND}" ]; then
+			echo "Could not find package: ${PKG}" >&2
+			return 1
+		fi
+	done
+
+	# Installing additional packages
+	#echo ">>> Installing additional packages"
+	#	pkg -c ${BASEDIR} add ${PACKAGESDIR}/All/gost-engine-g20220520.pkg
+	#	cd ${BASEDIR}/usr/lib/engines && ln -sfn /usr/local/lib/engines-1.1/gost.so.1.1 gost.so
+	#	sed -i '' '29 s/\:\\/,OPENSSL_CONF=\/usr\/local\/etc\/ssl\/opnsense.cnf\:\\/' ${BASEDIR}/etc/login.conf
+	
+	#	pkg -c ${BASEDIR} add ${PACKAGESDIR}/All/compat12x-amd64-12.2.1202000.20210406.pkg
+	#	if [ ! -e ${BASEDIR}/tmp/drweb-11.1.4-av-igw-freebsd-amd64.run ]; then
+	#		curl -o ${BASEDIR}/tmp/drweb-11.1.4-av-igw-freebsd-amd64.run https://cdn-download.drweb.com/pub/drweb/unix/gateway/11.1/drweb-11.1.4-av-igw-freebsd-amd64.run
+	#	fi
+	#	chmod +x ${BASEDIR}/tmp/drweb-11.1.4-av-igw-freebsd-amd64.run
+	#	chroot ${BASEDIR} /bin/sh -s << EOF
+	#	./tmp/drweb-11.1.4-av-igw-freebsd-amd64.run -- --non-interactive
+#EOF
+
+	# collect all installed packages (minus locked packages)
+	PKGLIST="$(pkg -c ${BASEDIR} query -e "%k != 1" %n)"
+
+	for PKG in ${PKGLIST}; do
+		# add, unlike install, is not aware of repositories :(
+		pkg -c ${BASEDIR} annotate -qyA ${PKG} repository ${PRODUCT_NAME}
+	done
+}
+
+remove_packages()
+{
+	BASEDIR=${1}
+	shift
+	PKGLIST=${@}
+
+	echo ">>> Removing packages in ${BASEDIR}: ${PKGLIST}"
+
+	for PKG in ${PKGLIST}; do
+		for PKGFILE in $(cd ${BASEDIR}${PACKAGESDIR}; find All -type f -iname "${PKG}-[0-9]*.pkg"); do
+			rm ${BASEDIR}${PACKAGESDIR}/${PKGFILE}
+		done
+	done
 }
 
 bundle_packages()
@@ -1010,10 +1023,8 @@ bundle_packages()
 	fi
 
 	# generate all signatures and add bootstrap links
-	for PKGFILE in $(cd ${BASEDIR}${PACKAGESDIR}-new; \
-	    find All -type f); do
-		PKGINFO=$(pkg info -F ${BASEDIR}${PACKAGESDIR}-new/${PKGFILE} \
-		    | grep ^Name | awk '{ print $3; }')
+	for PKGFILE in $(cd ${BASEDIR}${PACKAGESDIR}-new; find All -type f); do
+		PKGINFO=$(pkg info -F ${BASEDIR}${PACKAGESDIR}-new/${PKGFILE} | grep ^Name | awk '{ print $3; }')
 		LATESTDIR=${BASEDIR}${PACKAGESDIR}-new/Latest
 		ln -sfn ../${PKGFILE} ${LATESTDIR}/${PKGINFO}.pkg
 		generate_signature \
@@ -1055,6 +1066,12 @@ setup_packages()
 	setup_norun ${1}
 	extract_packages ${1}
 	install_packages ${@} ${PRODUCT_ADDITIONS} ${PRODUCT_CORE}
+
+	#echo ">>> Setting up repository"
+	#	extract_packages ${1}/usr/local
+	#	cd ${1}/tmp && chmod -x drweb-11.1.4-av-igw-freebsd-amd64.run
+	#	mv ${1}/tmp/drweb-11.1.4-av-igw-freebsd-amd64.run ${1}/usr/local${PACKAGESDIR}/All
+	#	find ${1}/usr/local${PACKAGESDIR} -name '.*' ! -name '.' ! -name '..' -delete
 
 	# remove package repository
 	rm -rf ${1}${PACKAGESDIR}

@@ -137,7 +137,7 @@ UNAME_r=\$(freebsd-version)
 	# check whether the package is available
 	# under a different version number
 	PKGNAME=\$(basename \${PKGFILE})
-	PKGNAME=\${PKGNAME%%-[0-9]*}
+	PKGNAME=\${PKGNAME%-[a-z0-9]*}
 	PORT_DESCR="\${PORT_ORIGIN} (\${PKGNAME})"
 	PKGLINK=${PACKAGESDIR}/Latest/\${PKGNAME}.pkg
 	if [ -L \${PKGLINK} ]; then
@@ -193,12 +193,12 @@ UNAME_r=\$(freebsd-version)
 	pkg autoremove -y
 
 	for PKGNAME in \$(pkg query %n); do
-		OLD=\$(find ${PACKAGESDIR}/All -name "\${PKGNAME}-[0-9]*.pkg")
+		OLD=\$(find ${PACKAGESDIR}/All -type f -iname "\${PKGNAME}-[a-z0-9]*.pkg")
 		if [ -n "\${OLD}" ]; then
 			# already found
 			continue
 		fi
-		NEW=\$(find ${PACKAGESDIR}-cache/All -name "\${PKGNAME}-[0-9]*.pkg")
+		NEW=\$(find ${PACKAGESDIR}-cache/All -type f -iname "\${PKGNAME}-[a-z0-9]*.pkg")
 		echo ">>> Saving runtime package: \${PKGNAME}"
 		cp \${NEW} ${PACKAGESDIR}/All
 	done
